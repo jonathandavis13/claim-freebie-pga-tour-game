@@ -1,0 +1,6 @@
+# 1. Install Python package manager and Playwright
+pip install playwright
+
+# 2. Install required browser binaries (Chromium)
+playwright install chromium
+playwright install-deps
