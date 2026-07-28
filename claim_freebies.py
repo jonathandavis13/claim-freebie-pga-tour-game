@@ -6,13 +6,20 @@ STORE_URL = "https://store.pgatourgolfshootout.concretesoftware.com/"
 
 def run():
     with sync_playwright() as p:
-        # Launch headless browser
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context()
+        # Launch headed browser for debugging (slow_mo helps observe actions)
+        browser = p.chromium.launch(headless=False, slow_mo=50)
+        context = browser.new_context(viewport={"width":1280, "height":800})
         page = context.new_page()
 
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Navigating to store...")
         page.goto(STORE_URL, wait_until="networkidle")
+
+        # Pause here to allow interactive debugging in headed mode
+        try:
+            page.pause()
+        except Exception:
+            # page.pause may not work in some environments; ignore if it fails
+            pass
 
         # 1. Handle Login
         try:
@@ -39,25 +46,56 @@ def run():
         except Exception as e:
             print(f"Login step bypassed or error: {e}")
 
-        # 2. Click all "Get Free" or "Get free" buttons
-        # Using exact case-insensitive regex matching for "Get Free"
+        # 2. Click all "Get Free" or "Get free" controls
+        # Try role-based lookup first (native buttons), then text, then attribute selectors
         free_buttons = page.get_by_role("button", name=r"/get free/i").all()
-        
+
         if not free_buttons:
-            # Fallback CSS selector search in case it's styled as a div/a rather than a native <button>
             free_buttons = page.locator("text=/Get Free/i").all()
+
+        if not free_buttons:
+            # Fallback to attribute-based selectors (e.g. <span data-id="get-free" ...>)
+            free_buttons = page.locator('[data-id="get-free"], [data-testid="get-free"], span[data-id], span[data-testid]').all()
 
         print(f"Found {len(free_buttons)} free item(s) to claim.")
 
         for idx, btn in enumerate(free_buttons, start=1):
             try:
-                if btn.is_visible():
-                    btn.scroll_into_view_if_needed()
-                    btn.click()
-                    print(f"Successfully clicked 'Get Free' button #{idx}")
+                # Wait until attached and visible
+                try:
+                    btn.wait_for(state="visible", timeout=5000)
+                except Exception:
+                    pass
+
+                if not btn.is_visible():
+                    print(f"Button #{idx} not visible, skipping.")
+                    continue
+
+                btn.scroll_into_view_if_needed()
+
+                # Try normal click, then force click, then JS click as fallbacks
+                clicked = False
+                try:
+                    btn.click(timeout=5000)
+                    clicked = True
+                except Exception:
+                    try:
+                        btn.click(force=True, timeout=5000)
+                        clicked = True
+                    except Exception:
+                        try:
+                            btn.evaluate("el => el.click()")
+                            clicked = True
+                        except Exception as e:
+                            print(f"JS-click fallback failed for button #{idx}: {e}")
+
+                if clicked:
+                    print(f"Successfully clicked 'Get Free' control #{idx}")
                     page.wait_for_timeout(2000)  # Wait for claim animation/network request
+                else:
+                    print(f"Failed to click button #{idx} by any method.")
             except Exception as e:
-                print(f"Failed to click button #{idx}: {e}")
+                print(f"Failed to handle button #{idx}: {e}")
 
         browser.close()
         print("Done!")
