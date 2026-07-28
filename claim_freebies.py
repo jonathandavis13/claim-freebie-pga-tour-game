@@ -6,96 +6,73 @@ STORE_URL = "https://store.pgatourgolfshootout.concretesoftware.com/"
 
 def run():
     with sync_playwright() as p:
-        # Launch headed browser for debugging (slow_mo helps observe actions)
-        browser = p.chromium.launch(headless=False, slow_mo=50)
-        context = browser.new_context(viewport={"width":1280, "height":800})
+        # Launch headless browser
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
         page = context.new_page()
 
         print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Navigating to store...")
         page.goto(STORE_URL, wait_until="networkidle")
 
-        # Pause here to allow interactive debugging in headed mode
-        try:
-            page.pause()
-        except Exception:
-            # page.pause may not work in some environments; ignore if it fails
-            pass
-
         # 1. Handle Login
         try:
-            # Look for a Login button/link at top
-            login_btn = page.get_by_role("button", name="Log in")
-            if login_btn.is_visible():
-                login_btn.click()
-                page.wait_for_timeout(1000)
+            # Check if user input box is visible or open modal
+            input_box = page.locator("input#user-id-input, input[placeholder*='M3WMG' i], input[placeholder*='key' i]").first
+            if not input_box.is_visible():
+                login_trigger = page.locator("button:has-text('Log in')").first
+                if login_trigger.is_visible():
+                    login_trigger.click()
+                    page.wait_for_timeout(1000)
 
-            # Input User Key if prompt/input appears
-            input_box = page.locator("input[type='text'], input[placeholder*='key' i]")
+            input_box = page.locator("input#user-id-input, input[placeholder*='M3WMG' i], input[placeholder*='key' i]").first
             if input_box.is_visible():
                 input_box.fill(USER_KEY)
                 
-                # Submit login form
-                submit_btn = page.get_by_role("button", name="Submit")
+                # Submit login modal via modal continue button
+                submit_btn = page.locator("[data-type='user-id-button-continue'], .user-id-modal__button").first
                 if submit_btn.is_visible():
                     submit_btn.click()
+                    page.wait_for_timeout(3000)
                 else:
                     input_box.press("Enter")
-                
-                page.wait_for_timeout(3000)
+                    page.wait_for_timeout(3000)
+            
+            # Verify modal closed
+            if not page.locator(".user-id-modal__container").is_visible():
                 print("Logged in successfully.")
+            else:
+                print("Warning: Login modal still present.")
         except Exception as e:
-            print(f"Login step bypassed or error: {e}")
+            print(f"Login step exception: {e}")
 
-        # 2. Click all "Get Free" or "Get free" controls
-        # Try role-based lookup first (native buttons), then text, then attribute selectors
-        free_buttons = page.get_by_role("button", name=r"/get free/i").all()
+        # 2. Check items to claim vs owned items
+        owned_buttons = page.locator("button:has-text('Owned'), [data-testid='owned']").all()
+        if owned_buttons:
+            print(f"Found {len(owned_buttons)} item(s) already claimed ('Owned').")
 
-        if not free_buttons:
-            free_buttons = page.locator("text=/Get Free/i").all()
-
-        if not free_buttons:
-            # Fallback to attribute-based selectors (e.g. <span data-id="get-free" ...>)
-            free_buttons = page.locator('[data-id="get-free"], [data-testid="get-free"], span[data-id], span[data-testid]').all()
-
-        print(f"Found {len(free_buttons)} free item(s) to claim.")
-
-        for idx, btn in enumerate(free_buttons, start=1):
+        # Select free item buttons
+        free_buttons = page.locator("[data-id='get-free'], [data-testid='get-free'], button:has-text('Get free'), button:has-text('Free')").all()
+        
+        claimable_buttons = []
+        for btn in free_buttons:
             try:
-                # Wait until attached and visible
-                try:
-                    btn.wait_for(state="visible", timeout=5000)
-                except Exception:
-                    pass
+                txt = btn.inner_text().strip().lower()
+                if btn.is_visible() and "owned" not in txt:
+                    claimable_buttons.append(btn)
+            except Exception:
+                pass
 
-                if not btn.is_visible():
-                    print(f"Button #{idx} not visible, skipping.")
-                    continue
+        print(f"Found {len(claimable_buttons)} free item(s) to claim.")
 
-                btn.scroll_into_view_if_needed()
-
-                # Try normal click, then force click, then JS click as fallbacks
-                clicked = False
-                try:
-                    btn.click(timeout=5000)
-                    clicked = True
-                except Exception:
-                    try:
-                        btn.click(force=True, timeout=5000)
-                        clicked = True
-                    except Exception:
-                        try:
-                            btn.evaluate("el => el.click()")
-                            clicked = True
-                        except Exception as e:
-                            print(f"JS-click fallback failed for button #{idx}: {e}")
-
-                if clicked:
-                    print(f"Successfully clicked 'Get Free' control #{idx}")
-                    page.wait_for_timeout(2000)  # Wait for claim animation/network request
-                else:
-                    print(f"Failed to click button #{idx} by any method.")
+        for idx, btn in enumerate(claimable_buttons, start=1):
+            try:
+                if btn.is_visible():
+                    btn.scroll_into_view_if_needed()
+                    btn.click()
+                    print(f"Successfully clicked 'Get Free' button #{idx}")
+                    page.wait_for_timeout(2000)
             except Exception as e:
-                print(f"Failed to handle button #{idx}: {e}")
+                print(f"Failed to click button #{idx}: {e}")
 
         browser.close()
         print("Done!")
