@@ -2,7 +2,7 @@ name: Daily PGA Golf Freebie Claim
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  # Runs daily at 11:00 UTC
+    - cron: '30 5 * * *'  # Runs daily at 05:30 UTC
   workflow_dispatch:      # Allows manual trigger button from GitHub UI
 
 jobs:
